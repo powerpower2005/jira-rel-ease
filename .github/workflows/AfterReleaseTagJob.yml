@@ -1,0 +1,78 @@
+name: Update Jira Fix Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '릴리스 버전 (예: 1.2.0)'
+        required: true
+
+jobs:
+  update-fix-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Get commits between tags
+        id: get-commits
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          DEV_VERSION="${VERSION}-dev"
+          
+          # 두 태그 사이의 커밋 로그 가져오기 (각 커밋의 해시 앞 7자리)
+          COMMITS=$(git log --pretty=format:"%h %s" ${DEV_VERSION}..${VERSION})
+          echo "COMMITS<<EOF" >> $GITHUB_ENV
+          echo "$COMMITS" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Extract Jira tickets and update fix versions
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_USER: ${{ secrets.JIRA_USER }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          # 커밋 메시지에서 Jira 티켓 ID 추출 (예: ABC-123)
+          TICKET_PATTERN='[A-Z]+-[0-9]+'
+          
+          # 중복 방지를 위한 처리된 티켓 목록
+          PROCESSED_TICKETS=()
+          
+          echo "커밋 로그에서 Jira 티켓 추출 및 Fix Version 업데이트 중..."
+          
+          while IFS= read -r COMMIT; do
+            if [[ -z "$COMMIT" ]]; then
+              continue
+            fi
+            
+            # 커밋 메시지에서 티켓 ID 추출
+            TICKETS=$(echo "$COMMIT" | grep -o -E "$TICKET_PATTERN")
+            
+            for TICKET in $TICKETS; do
+              # 이미 처리된 티켓인지 확인
+              if [[ " ${PROCESSED_TICKETS[@]} " =~ " ${TICKET} " ]]; then
+                echo "티켓 $TICKET 이미 처리됨, 건너뜀"
+                continue
+              fi
+              
+              echo "티켓 $TICKET의 Fix Version을 $VERSION으로 업데이트 중..."
+              
+              # REST API를 사용하여 Fix Version 업데이트
+              curl -D- -u "$JIRA_USER:$JIRA_API_TOKEN" \
+                -X PUT \
+                -H "Content-Type: application/json" \
+                --data "{\"update\":{\"fixVersions\":[{\"add\":{\"name\":\"$VERSION\"}}]}}" \
+                "$JIRA_BASE_URL/rest/api/2/issue/$TICKET"
+              
+              # 처리된 티켓 목록에 추가
+              PROCESSED_TICKETS+=("$TICKET")
+              
+              # API 호출 사이에 짧은 지연 추가
+              sleep 1
+            done
+          done <<< "$COMMITS"
+          
+          echo "총 ${#PROCESSED_TICKETS[@]}개의 티켓이 업데이트됨"
