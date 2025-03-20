@@ -3,7 +3,4 @@ test
 1114
 1135
 JIRATICKET - 1136
-<<<<<<< HEAD
 JIRATICKET - 1313
-=======
->>>>>>> 06b5582513ed209efc1ef70e9e18b6ffa37f5f34
