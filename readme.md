@@ -2,7 +2,7 @@
 # 🛠️ Update Jira Fix Version GitHub Workflow
 
 
-##Job: AfterReleaseTagJob.yml
+## Job: AfterReleaseTagJob.yml
 
 ### 📋 개요
 
