@@ -18,8 +18,10 @@ jobs:
     steps:
       - name: Clone repository
         run: |
+          echo "📦 저장소 ${{ github.event.inputs.repo }} 클론 시작"
           git clone --depth=1 "https://github.com/${{ github.event.inputs.repo }}.git" target-repo
           cd target-repo && git fetch --tags
+          echo "✅ 클론 완료 및 태그 패치"
 
   extract:
     runs-on: ubuntu-latest
@@ -33,30 +35,41 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.version }}"
           DEV_VERSION="v${VERSION}-dev"
-          VERSION_TAG="${VERSION}"
+          VERSION_TAG="v${VERSION}"
           TICKET_PATTERN='[A-Z][A-Z0-9]+-[0-9]+'
 
+          echo "🔍 버전 범위: $DEV_VERSION .. $VERSION_TAG"
+
           git -C target-repo rev-parse "$DEV_VERSION" >/dev/null 2>&1 || {
-            echo "slack-message=❌ 태그 $DEV_VERSION 이 존재하지 않습니다." >> $GITHUB_OUTPUT
+            MSG="❌ 태그 $DEV_VERSION 이 존재하지 않습니다."
+            echo "$MSG"
+            echo "slack-message=$MSG" >> $GITHUB_OUTPUT
             exit 1
           }
 
           git -C target-repo rev-parse "$VERSION_TAG" >/dev/null 2>&1 || {
-            echo "slack-message=❌ 태그 $VERSION_TAG 이 존재하지 않습니다." >> $GITHUB_OUTPUT
+            MSG="❌ 태그 $VERSION_TAG 이 존재하지 않습니다."
+            echo "$MSG"
+            echo "slack-message=$MSG" >> $GITHUB_OUTPUT
             exit 1
           }
 
           COMMITS=$(git -C target-repo log --pretty=format:"%s" ${DEV_VERSION}..${VERSION_TAG})
-
           if [[ -z "$COMMITS" ]]; then
-            echo "slack-message=⚠️ ${DEV_VERSION} ~ ${VERSION_TAG} 사이에 커밋이 없습니다." >> $GITHUB_OUTPUT
+            MSG="⚠️ ${DEV_VERSION} ~ ${VERSION_TAG} 사이에 커밋이 없습니다."
+            echo "$MSG"
+            echo "slack-message=$MSG" >> $GITHUB_OUTPUT
             echo "tickets=" >> $GITHUB_OUTPUT
             exit 0
           fi
 
           TICKETS=$(echo "$COMMITS" | grep -o -E "$TICKET_PATTERN" | sort -u | tr '\n' ' ')
+          echo "📌 추출된 티켓: $TICKETS"
           echo "tickets=$TICKETS" >> $GITHUB_OUTPUT
-          echo "slack-message=🔍 Jira 티켓 추출 완료: $TICKETS" >> $GITHUB_OUTPUT
+
+          MSG="🔍 Jira 티켓 추출 완료: $TICKETS"
+          echo "$MSG"
+          echo "slack-message=$MSG" >> $GITHUB_OUTPUT
 
   jira-update:
     runs-on: ubuntu-latest
@@ -76,12 +89,16 @@ jobs:
         run: |
           IFS=' ' read -ra TICKETS <<< "${{ needs.extract.outputs.tickets }}"
           if [[ -z "${TICKETS[*]}" ]]; then
+            echo "ℹ️ Jira 티켓이 없어 업데이트 생략됨."
             echo "slack-message=${{ needs.extract.outputs.slack-message }}" >> $GITHUB_OUTPUT
             exit 0
           fi
 
+          echo "🎯 Jira 업데이트 시작: 버전 $VERSION"
+
           FAILED_TICKETS=()
           for TICKET in "${TICKETS[@]}"; do
+            echo "➡️ $TICKET 업데이트 시도"
             RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
               -X PUT \
               -H "Content-Type: application/json" \
@@ -89,22 +106,29 @@ jobs:
               "$DOMAIN/rest/api/2/issue/$TICKET")
 
             if [[ "$RESPONSE" == "204" ]]; then
-              echo "✅ $TICKET updated"
+              echo "✅ $TICKET 업데이트 성공"
             elif [[ "$RESPONSE" == "401" || "$RESPONSE" == "403" ]]; then
-              echo "slack-message=❌ Jira 인증 실패 ($RESPONSE) - 사용자 또는 토큰 확인 필요" >> $GITHUB_OUTPUT
+              MSG="❌ Jira 인증 실패 ($RESPONSE) - 사용자 또는 토큰 확인 필요"
+              echo "$MSG"
+              echo "slack-message=$MSG" >> $GITHUB_OUTPUT
               exit 1
             else
+              echo "❌ $TICKET 실패 (응답: $RESPONSE)"
               FAILED_TICKETS+=("$TICKET")
             fi
             sleep 1
           done
 
           if [[ ${#FAILED_TICKETS[@]} -ne 0 ]]; then
-            echo "slack-message=⚠️ 일부 티켓 실패: ${FAILED_TICKETS[*]}" >> $GITHUB_OUTPUT
+            MSG="⚠️ 일부 티켓 실패: ${FAILED_TICKETS[*]}"
+            echo "$MSG"
+            echo "slack-message=$MSG" >> $GITHUB_OUTPUT
             exit 1
           fi
 
-          echo "slack-message=🎉 Jira Fix Version 업데이트 완료: ${TICKETS[*]}" >> $GITHUB_OUTPUT
+          MSG="🎉 Jira Fix Version 업데이트 완료: ${TICKETS[*]}"
+          echo "$MSG"
+          echo "slack-message=$MSG" >> $GITHUB_OUTPUT
 
   slack-notify:
     runs-on: ubuntu-latest
@@ -118,6 +142,8 @@ jobs:
           SLACK_MESSAGE: >-
             ${{ needs.jira-update.result == 'success' && needs.jira-update.outputs.slack-message || needs.extract.outputs.slack-message }}
         run: |
+          echo "📤 Slack 알림 전송 중..."
+          echo "내용: $SLACK_MESSAGE"
           curl -X POST --data-urlencode "payload={
             \"username\": \"jira-bot\",
             \"text\": \"$SLACK_MESSAGE\",
