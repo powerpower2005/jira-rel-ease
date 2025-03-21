@@ -137,21 +137,31 @@ jobs:
           VERSION: ${{ github.event.inputs.version }}
           TICKETS: ${{ steps.extract.outputs.tickets }}
           COMMITS_BASE64: ${{ steps.extract.outputs.commits_base64 }}
+          DOMAIN: ${{ secrets.DOMAIN }}
         run: |
           if [[ -z "$TICKETS" ]]; then
             MSG="ℹ️ No Jira tickets found for version $VERSION. No updates made."
           else
             COMMITS=$(echo "$COMMITS_BASE64" | base64 -d)
+
+            FIXVERSION_LINK="$DOMAIN/issues/?jql=fixVersion=${VERSION}"
             MSG="📦 *Release $VERSION FixVersion 최종 요약*\n\n"
+            MSG+="🔗 <${FIXVERSION_LINK}|FixVersion: $VERSION>\n\n"
+
             MSG+="🎫 *티켓 목록:*\n"
             for TICKET in $TICKETS; do
-              MSG+="• $TICKET\n"
+              MSG+="• <${DOMAIN}/browse/${TICKET}|${TICKET}>\n"
             done
+
             MSG+="\n🔀 *포함된 커밋:*\n"
             while IFS= read -r COMMIT; do
               MSG+="• $COMMIT\n"
             done <<< "$COMMITS"
           fi
 
-          printf '%s\n' "$MSG"
-          curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":memo:\"}" "$SLACK_WEBHOOK"
+          echo "$MSG"
+          curl -X POST --data-urlencode "payload={
+            \"username\": \"jira-bot\",
+            \"text\": \"$MSG\",
+            \"icon_emoji\": \":memo:\"
+          }" "$SLACK_WEBHOOK"
