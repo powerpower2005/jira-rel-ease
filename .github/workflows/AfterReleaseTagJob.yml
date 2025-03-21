@@ -7,30 +7,24 @@ on:
         description: '릴리스 버전 (예: 1.2.0)'
         required: true
       repo:
-        description: '추적할 레포지토리 (예: owner/repo)'
+        description: '추적할 레포지토리 (예: Org/repo)'
         required: true
 
 jobs:
   release:
     runs-on: ubuntu-latest
     environment:
-      name: jira  # 🔁 slack → jira
+      name: jira
     steps:
       - name: Clone repository
         id: clone
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: |
-          echo "📦 저장소 ${{ github.event.inputs.repo }} 클론 시작"
           git clone --depth=1 "https://github.com/${{ github.event.inputs.repo }}.git" target-repo
           cd target-repo && git fetch --tags
           MSG="📦 저장소 클론 완료"
-          echo "$MSG"
-          curl -X POST --data-urlencode "payload={
-            \"username\": \"jira-bot\",
-            \"text\": \"$MSG\",
-            \"icon_emoji\": \":package:\"
-          }" "$SLACK_WEBHOOK"
+          curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":package:\"}" "$SLACK_WEBHOOK"
 
       - name: Extract Jira tickets from commits
         id: extract
@@ -42,53 +36,30 @@ jobs:
           VERSION_TAG="${VERSION}"
           TICKET_PATTERN='[A-Z][A-Z0-9]+-[0-9]+'
 
-          echo "🔍 버전 범위: $DEV_VERSION .. $VERSION_TAG"
-
           git -C target-repo rev-parse "$DEV_VERSION" >/dev/null 2>&1 || {
             MSG="❌ 태그 $DEV_VERSION 이 존재하지 않습니다."
-            echo "$MSG"
-            curl -X POST --data-urlencode "payload={
-              \"username\": \"jira-bot\",
-              \"text\": \"$MSG\",
-              \"icon_emoji\": \":x:\"
-            }" "$SLACK_WEBHOOK"
+            curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":x:\"}" "$SLACK_WEBHOOK"
             exit 1
           }
 
           git -C target-repo rev-parse "$VERSION_TAG" >/dev/null 2>&1 || {
             MSG="❌ 태그 $VERSION_TAG 이 존재하지 않습니다."
-            echo "$MSG"
-            curl -X POST --data-urlencode "payload={
-              \"username\": \"jira-bot\",
-              \"text\": \"$MSG\",
-              \"icon_emoji\": \":x:\"
-            }" "$SLACK_WEBHOOK"
+            curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":x:\"}" "$SLACK_WEBHOOK"
             exit 1
           }
 
           COMMITS=$(git -C target-repo log --pretty=format:"%s" ${DEV_VERSION}..${VERSION_TAG})
           if [[ -z "$COMMITS" ]]; then
             MSG="⚠️ ${DEV_VERSION} ~ ${VERSION_TAG} 사이에 커밋이 없습니다."
-            echo "$MSG"
-            curl -X POST --data-urlencode "payload={
-              \"username\": \"jira-bot\",
-              \"text\": \"$MSG\",
-              \"icon_emoji\": \":warning:\"
-            }" "$SLACK_WEBHOOK"
+            curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":warning:\"}" "$SLACK_WEBHOOK"
             echo "tickets=" >> $GITHUB_OUTPUT
             exit 0
           fi
 
           TICKETS=$(echo "$COMMITS" | grep -o -E "$TICKET_PATTERN" | sort -u | tr '\n' ' ')
           echo "tickets=$TICKETS" >> $GITHUB_OUTPUT
-
           MSG="🔍 Jira 티켓 추출 완료: $TICKETS"
-          echo "$MSG"
-          curl -X POST --data-urlencode "payload={
-            \"username\": \"jira-bot\",
-            \"text\": \"$MSG\",
-            \"icon_emoji\": \":mag:\"
-          }" "$SLACK_WEBHOOK"
+          curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":mag:\"}" "$SLACK_WEBHOOK"
 
       - name: Update Jira Fix Versions
         id: update-jira
@@ -101,34 +72,23 @@ jobs:
         run: |
           IFS=' ' read -ra TICKETS <<< "${{ steps.extract.outputs.tickets }}"
           if [[ -z "${TICKETS[*]}" ]]; then
-            echo "ℹ️ Jira 티켓 없음. 업데이트 생략."
             exit 0
           fi
 
-          echo "🎯 Jira 업데이트 시작: 버전 $VERSION"
           FAILED_TICKETS=()
-
           for TICKET in "${TICKETS[@]}"; do
-            echo "➡️ $TICKET 업데이트 시도"
             RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
-              -X PUT \
-              -H "Content-Type: application/json" \
+              -X PUT -H "Content-Type: application/json" \
               --data "{\"update\":{\"fixVersions\":[{\"add\":{\"name\":\"$VERSION\"}}]}}" \
               "$DOMAIN/rest/api/2/issue/$TICKET")
 
             if [[ "$RESPONSE" == "204" ]]; then
-              echo "✅ $TICKET 업데이트 성공"
+              continue
             elif [[ "$RESPONSE" == "401" || "$RESPONSE" == "403" ]]; then
-              MSG="❌ Jira 인증 실패 ($RESPONSE) - 사용자 또는 토큰 확인 필요"
-              echo "$MSG"
-              curl -X POST --data-urlencode "payload={
-                \"username\": \"jira-bot\",
-                \"text\": \"$MSG\",
-                \"icon_emoji\": \":x:\"
-              }" "$SLACK_WEBHOOK"
+              MSG="❌ Jira 인증 실패 ($RESPONSE)"
+              curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":x:\"}" "$SLACK_WEBHOOK"
               exit 1
             else
-              echo "❌ $TICKET 실패 (응답: $RESPONSE)"
               FAILED_TICKETS+=("$TICKET")
             fi
             sleep 1
@@ -136,19 +96,9 @@ jobs:
 
           if [[ ${#FAILED_TICKETS[@]} -ne 0 ]]; then
             MSG="⚠️ 일부 티켓 실패: ${FAILED_TICKETS[*]}"
-            echo "$MSG"
-            curl -X POST --data-urlencode "payload={
-              \"username\": \"jira-bot\",
-              \"text\": \"$MSG\",
-              \"icon_emoji\": \":warning:\"
-            }" "$SLACK_WEBHOOK"
+            curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":warning:\"}" "$SLACK_WEBHOOK"
             exit 1
           fi
 
           MSG="🎉 Jira Fix Version 업데이트 완료: ${TICKETS[*]}"
-          echo "$MSG"
-          curl -X POST --data-urlencode "payload={
-            \"username\": \"jira-bot\",
-            \"text\": \"$MSG\",
-            \"icon_emoji\": \":white_check_mark:\"
-          }" "$SLACK_WEBHOOK"
+          curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":white_check_mark:\"}" "$SLACK_WEBHOOK"
