@@ -7,8 +7,12 @@ on:
         description: '릴리스 버전 (예: 1.2.0)'
         required: true
       repo:
-        description: '추적할 레포지토리 (예: Org/repo)'
+        description: '대상 레포 (예: owner/repo)'
         required: true
+      use_pat:
+        description: '외부 레포 접근에 PAT 사용할지 여부 (true/false)'
+        required: true
+        default: 'false'
 
 jobs:
   release:
@@ -16,15 +20,26 @@ jobs:
     environment:
       name: jira
     steps:
-      - name: Clone repository
-        id: clone
+      - name: Checkout target repository (with or without PAT)
+        id: checkout
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.repo }}
+          path: target-repo
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ github.event.inputs.use_pat == 'true' && secrets.REPO_PAT || github.token }}
+
+      - name: Notify clone success
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: |
-          git clone --depth=1 "https://github.com/${{ github.event.inputs.repo }}.git" target-repo
-          cd target-repo && git fetch --tags
-          MSG="📦 저장소 클론 완료"
-          curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":package:\"}" "$SLACK_WEBHOOK"
+          MSG="📦 Repository checkout complete: ${{ github.event.inputs.repo }}"
+          curl -X POST --data-urlencode "payload={
+            \"username\": \"jira-bot\",
+            \"text\": \"$MSG\",
+            \"icon_emoji\": \":package:\"
+          }" "$SLACK_WEBHOOK"
 
       - name: Extract Jira tickets from commits
         id: extract
