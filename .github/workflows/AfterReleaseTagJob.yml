@@ -7,7 +7,7 @@ on:
         description: '릴리스 버전 (예: 1.2.0)'
         required: true
       repo:
-        description: '대상 레포지토리 (예: owner/repo)'
+        description: '대상 레포 (예: owner/repo)'
         required: true
       use_pat:
         description: '외부 레포 접근에 PAT 사용할지 여부 (true/false)'
@@ -21,7 +21,6 @@ jobs:
       name: jira
     steps:
       - name: Checkout target repository
-        id: checkout
         uses: actions/checkout@v4
         with:
           repository: ${{ github.event.inputs.repo }}
@@ -58,64 +57,23 @@ jobs:
           fi
 
           TICKETS=$(echo "$COMMITS" | grep -o -E "$TICKET_PATTERN" | sort -u | tr '\n' ' ')
+          COMMITS_BASE64=$(echo "$COMMITS" | base64 -w 0)
+
           echo "tickets=$TICKETS" >> $GITHUB_OUTPUT
-          echo "commits=$COMMITS" >> $GITHUB_OUTPUT
+          echo "commits_base64=$COMMITS_BASE64" >> $GITHUB_OUTPUT
           echo "slack-message=🔍 Jira 티켓 및 커밋 추출 완료: $TICKETS" >> $GITHUB_OUTPUT
-
-      - name: Update Jira Fix Versions
-        id: update-jira
-        env:
-          DOMAIN: ${{ secrets.JIRA_DOMAIN }}
-          USER: ${{ secrets.JIRA_USER }}
-          API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-          VERSION: ${{ github.event.inputs.version }}
-        run: |
-          IFS=' ' read -ra TICKETS <<< "${{ steps.extract.outputs.tickets }}"
-          if [[ -z "${TICKETS[*]}" ]]; then
-            echo "ℹ️ Jira 티켓 없음. 업데이트 생략."
-            exit 0
-          fi
-
-          echo "🎯 Jira 업데이트 시작: 버전 $VERSION"
-          FAILED_TICKETS=()
-
-          for TICKET in "${TICKETS[@]}"; do
-            echo "➡️ $TICKET 업데이트 시도"
-            RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
-              -X PUT \
-              -H "Content-Type: application/json" \
-              --data "{\"update\":{\"fixVersions\":[{\"add\":{\"name\":\"$VERSION\"}}]}}" \
-              "$DOMAIN/rest/api/2/issue/$TICKET")
-
-            if [[ "$RESPONSE" == "204" ]]; then
-              echo "✅ $TICKET 업데이트 성공"
-            elif [[ "$RESPONSE" == "401" || "$RESPONSE" == "403" ]]; then
-              echo "❌ Jira 인증 실패 ($RESPONSE) - 사용자 또는 토큰 확인 필요"
-              exit 1
-            else
-              echo "❌ $TICKET 실패 (응답: $RESPONSE)"
-              FAILED_TICKETS+=("$TICKET")
-            fi
-            sleep 1
-          done
-
-          if [[ ${#FAILED_TICKETS[@]} -ne 0 ]]; then
-            echo "⚠️ 일부 티켓 실패: ${FAILED_TICKETS[*]}"
-            exit 1
-          fi
-
-          echo "🎉 Jira Fix Version 업데이트 완료: ${TICKETS[*]}"
 
       - name: Send Slack Notification
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           VERSION: ${{ github.event.inputs.version }}
           TICKETS: ${{ steps.extract.outputs.tickets }}
-          COMMITS: ${{ steps.extract.outputs.commits }}
+          COMMITS_BASE64: ${{ steps.extract.outputs.commits_base64 }}
         run: |
           if [[ -z "$TICKETS" ]]; then
             MSG="ℹ️ No Jira tickets found for version $VERSION. No updates made."
           else
+            COMMITS=$(echo "$COMMITS_BASE64" | base64 -d)
             MSG="📦 *Release $VERSION FixVersion 업데이트 완료*\n\n"
             MSG+="🎫 *티켓 목록:*\n"
             for TICKET in $TICKETS; do
