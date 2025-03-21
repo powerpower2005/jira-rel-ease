@@ -21,6 +21,7 @@ jobs:
       name: jira
     steps:
       - name: Checkout target repository
+        id: checkout
         uses: actions/checkout@v4
         with:
           repository: ${{ github.event.inputs.repo }}
@@ -28,6 +29,13 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           token: ${{ github.event.inputs.use_pat == 'true' && secrets.REPO_PAT || github.token }}
+      - name: Notify checkout
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          REPO: ${{ github.event.inputs.repo }}
+        run: |
+          MSG="📦 레포지토리 체크아웃 완료: $REPO"
+          curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":package:\"}" "$SLACK_WEBHOOK"
 
       - name: Extract Jira tickets from commits
         id: extract
@@ -62,8 +70,63 @@ jobs:
           echo "tickets=$TICKETS" >> $GITHUB_OUTPUT
           echo "commits_base64=$COMMITS_BASE64" >> $GITHUB_OUTPUT
           echo "slack-message=🔍 Jira 티켓 및 커밋 추출 완료: $TICKETS" >> $GITHUB_OUTPUT
+      - name: Notify ticket extraction
+        if: success() || failure()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          MSG: ${{ steps.extract.outputs.slack-message }}
+        run: |
+          curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":mag:\"}" "$SLACK_WEBHOOK"
 
-      - name: Send Slack Notification
+      - name: Update Jira Fix Versions
+        id: update-jira
+        env:
+          DOMAIN: ${{ secrets.JIRA_DOMAIN }}
+          USER: ${{ secrets.JIRA_USER }}
+          API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          IFS=' ' read -ra TICKETS <<< "${{ steps.extract.outputs.tickets }}"
+          if [[ -z "${TICKETS[*]}" ]]; then
+            echo "업데이트할 Jira 티켓이 없습니다."
+            echo "slack-message=ℹ️ Jira 티켓 없음. 업데이트 생략." >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          FAILED_TICKETS=()
+          for TICKET in "${TICKETS[@]}"; do
+            RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
+              -X PUT -H "Content-Type: application/json" \
+              --data "{\"update\":{\"fixVersions\":[{\"add\":{\"name\":\"$VERSION\"}}]}}" \
+              "$DOMAIN/rest/api/2/issue/$TICKET")
+
+            if [[ "$RESPONSE" == "204" ]]; then
+              continue
+            elif [[ "$RESPONSE" == "401" || "$RESPONSE" == "403" ]]; then
+              echo "slack-message=❌ Jira 인증 실패 ($RESPONSE)" >> $GITHUB_OUTPUT
+              exit 1
+            else
+              FAILED_TICKETS+=("$TICKET")
+            fi
+            sleep 1
+          done
+
+          if [[ ${#FAILED_TICKETS[@]} -ne 0 ]]; then
+            echo "slack-message=⚠️ 일부 Jira 티켓 업데이트 실패: ${FAILED_TICKETS[*]}" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          echo "slack-message=🎉 Jira Fix Version 업데이트 성공" >> $GITHUB_OUTPUT
+      - name: Notify Jira update
+        if: success() || failure()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          MSG: ${{ steps.update-jira.outputs.slack-message }}
+        run: |
+          curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":white_check_mark:\"}" "$SLACK_WEBHOOK"
+
+      - name: Send summary Slack message
+        if: always()
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           VERSION: ${{ github.event.inputs.version }}
@@ -74,19 +137,7 @@ jobs:
             MSG="ℹ️ No Jira tickets found for version $VERSION. No updates made."
           else
             COMMITS=$(echo "$COMMITS_BASE64" | base64 -d)
-            MSG="📦 *Release $VERSION FixVersion 업데이트 완료*\n\n"
+            MSG="📦 *Release $VERSION FixVersion 최종 요약*\n\n"
             MSG+="🎫 *티켓 목록:*\n"
             for TICKET in $TICKETS; do
-              MSG+="• $TICKET\n"
-            done
-            MSG+="\n🔀 *포함된 커밋 (총 $(echo "$COMMITS" | wc -l)개):*\n"
-            while IFS= read -r COMMIT; do
-              MSG+="• $COMMIT\n"
-            done <<< "$COMMITS"
-          fi
-
-          curl -X POST --data-urlencode "payload={
-            \"username\": \"jira-bot\",
-            \"text\": \"$MSG\",
-            \"icon_emoji\": \":package:\"
-          }" "$SLACK_WEBHOOK"
+              MSG+="• $
