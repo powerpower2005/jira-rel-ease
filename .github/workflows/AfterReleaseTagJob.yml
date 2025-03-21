@@ -33,7 +33,7 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.version }}"
           DEV_VERSION="v${VERSION}-dev"
-          VERSION_TAG="v${VERSION}"
+          VERSION_TAG="${VERSION}"
           TICKET_PATTERN='[A-Z][A-Z0-9]+-[0-9]+'
 
           git -C target-repo rev-parse "$DEV_VERSION" >/dev/null 2>&1 || {
