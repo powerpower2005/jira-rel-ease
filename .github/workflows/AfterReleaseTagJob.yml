@@ -35,7 +35,7 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.version }}"
           DEV_VERSION="v${VERSION}-dev"
-          VERSION_TAG="v${VERSION}"
+          VERSION_TAG="${VERSION}"
           TICKET_PATTERN='[A-Z][A-Z0-9]+-[0-9]+'
 
           echo "🔍 버전 범위: $DEV_VERSION .. $VERSION_TAG"
