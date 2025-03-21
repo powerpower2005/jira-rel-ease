@@ -29,7 +29,9 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           token: ${{ github.event.inputs.use_pat == 'true' && secrets.REPO_PAT || github.token }}
+
       - name: Notify checkout
+        if: always()
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           REPO: ${{ github.event.inputs.repo }}
@@ -70,12 +72,14 @@ jobs:
           echo "tickets=$TICKETS" >> $GITHUB_OUTPUT
           echo "commits_base64=$COMMITS_BASE64" >> $GITHUB_OUTPUT
           echo "slack-message=🔍 Jira 티켓 및 커밋 추출 완료: $TICKETS" >> $GITHUB_OUTPUT
+
       - name: Notify ticket extraction
-        if: success() || failure()
+        if: always()
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           MSG: ${{ steps.extract.outputs.slack-message }}
         run: |
+          printf '%s\n' "$MSG"
           curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":mag:\"}" "$SLACK_WEBHOOK"
 
       - name: Update Jira Fix Versions
@@ -88,7 +92,6 @@ jobs:
         run: |
           IFS=' ' read -ra TICKETS <<< "${{ steps.extract.outputs.tickets }}"
           if [[ -z "${TICKETS[*]}" ]]; then
-            echo "업데이트할 Jira 티켓이 없습니다."
             echo "slack-message=ℹ️ Jira 티켓 없음. 업데이트 생략." >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -117,13 +120,15 @@ jobs:
           fi
 
           echo "slack-message=🎉 Jira Fix Version 업데이트 성공" >> $GITHUB_OUTPUT
+
       - name: Notify Jira update
-        if: success() || failure()
+        if: always()
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           MSG: ${{ steps.update-jira.outputs.slack-message }}
         run: |
-          curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":white_check_mark:\"}" "$SLACK_WEBHOOK"
+          printf '%s\n' "$MSG"
+          curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":rocket:\"}" "$SLACK_WEBHOOK"
 
       - name: Send summary Slack message
         if: always()
@@ -140,4 +145,13 @@ jobs:
             MSG="📦 *Release $VERSION FixVersion 최종 요약*\n\n"
             MSG+="🎫 *티켓 목록:*\n"
             for TICKET in $TICKETS; do
-              MSG+="• $
+              MSG+="• $TICKET\n"
+            done
+            MSG+="\n🔀 *포함된 커밋:*\n"
+            while IFS= read -r COMMIT; do
+              MSG+="• $COMMIT\n"
+            done <<< "$COMMITS"
+          fi
+
+          printf '%s\n' "$MSG"
+          curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":memo:\"}" "$SLACK_WEBHOOK"
