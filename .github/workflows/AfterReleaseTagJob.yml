@@ -24,8 +24,10 @@ jobs:
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: |
-          curl -X POST -H 'Content-type: application/json' --data "{
-            \"text\": \"📦 저장소 \`${{ github.event.inputs.repo }}\` 체크아웃 완료\"
+          curl -X POST --data-urlencode "payload={
+            \"username\": \"jira-bot\",
+            \"text\": \"📦 저장소 \`${{ github.event.inputs.repo }}\` 체크아웃 완료\",
+            \"icon_emoji\": \":package:\"
           }" "$SLACK_WEBHOOK"
 
       - name: Extract commits and Jira tickets
@@ -33,24 +35,22 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.version }}"
           DEV_VERSION="v${VERSION}-dev"
+          VERSION_TAG="v${VERSION}"
           TICKET_PATTERN='[A-Z][A-Z0-9]+-[0-9]+'
 
           git -C target-repo rev-parse "$DEV_VERSION" >/dev/null 2>&1 || {
-            echo "❌ 태그 $DEV_VERSION 없음"
             echo "SLACK_MESSAGE=❌ 태그 $DEV_VERSION 이 존재하지 않습니다." >> $GITHUB_ENV
             exit 1
           }
 
           git -C target-repo rev-parse "$VERSION_TAG" >/dev/null 2>&1 || {
-            echo "❌ 태그 $VERSION_TAG 없음"
             echo "SLACK_MESSAGE=❌ 태그 $VERSION_TAG 이 존재하지 않습니다." >> $GITHUB_ENV
             exit 1
           }
 
-          COMMITS=$(git -C target-repo log --pretty=format:"%s" ${DEV_VERSION}..${VERSION})
+          COMMITS=$(git -C target-repo log --pretty=format:"%s" ${DEV_VERSION}..${VERSION_TAG})
 
           if [[ -z "$COMMITS" ]]; then
-            echo "⚠️ ${DEV_VERSION}부터 ${VERSION_TAG}까지 커밋 없음"
             echo "SLACK_MESSAGE=⚠️ ${DEV_VERSION} ~ ${VERSION_TAG} 사이에 커밋이 없습니다." >> $GITHUB_ENV
             echo "tickets=" >> $GITHUB_OUTPUT
             exit 0
@@ -64,8 +64,10 @@ jobs:
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: |
-          curl -X POST -H 'Content-type: application/json' --data "{
-            \"text\": \"🔍 Jira 티켓 추출 완료\"
+          curl -X POST --data-urlencode "payload={
+            \"username\": \"jira-bot\",
+            \"text\": \"🔍 Jira 티켓 추출 완료\",
+            \"icon_emoji\": \":mag:\"
           }" "$SLACK_WEBHOOK"
 
       - name: Update Jira Fix Versions
@@ -121,17 +123,21 @@ jobs:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           SLACK_MESSAGE: ${{ env.SLACK_MESSAGE }}
         run: |
-          curl -X POST -H 'Content-type: application/json' --data "{
-            \"text\": \"$SLACK_MESSAGE\"
+          curl -X POST --data-urlencode "payload={
+            \"username\": \"jira-bot\",
+            \"text\": \"$SLACK_MESSAGE\",
+            \"icon_emoji\": \":robot_face:\"
           }" "$SLACK_WEBHOOK"
 
-      - name: Notify - 전체 워크플로우 완료
+      - name: Notify - 전체 완료
         if: success()
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: |
-          curl -X POST -H 'Content-type: application/json' --data "{
-            \"text\": \"✅ 전체 워크플로우 완료\"
+          curl -X POST --data-urlencode "payload={
+            \"username\": \"jira-bot\",
+            \"text\": \"✅ 전체 워크플로우 완료\",
+            \"icon_emoji\": \":white_check_mark:\"
           }" "$SLACK_WEBHOOK"
 
       - name: Notify - 전체 실패
@@ -139,6 +145,8 @@ jobs:
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: |
-          curl -X POST -H 'Content-type: application/json' --data "{
-            \"text\": \"❌ 워크플로우 실패. 로그를 확인하세요.\"
+          curl -X POST --data-urlencode "payload={
+            \"username\": \"jira-bot\",
+            \"text\": \"❌ 워크플로우 실패. 로그를 확인하세요.\",
+            \"icon_emoji\": \":x:\"
           }" "$SLACK_WEBHOOK"
