@@ -85,9 +85,9 @@ jobs:
       - name: Update Jira Fix Versions
         id: update-jira
         env:
-          DOMAIN: ${{ secrets.JIRA_DOMAIN }}
-          USER: ${{ secrets.JIRA_USER }}
-          API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          DOMAIN: ${{ secrets.DOMAIN }}
+          USER: ${{ secrets.USER }}
+          API_TOKEN: ${{ secrets.API_TOKEN }}
           VERSION: ${{ github.event.inputs.version }}
         run: |
           IFS=' ' read -ra TICKETS <<< "${{ steps.extract.outputs.tickets }}"
