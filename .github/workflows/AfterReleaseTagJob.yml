@@ -11,10 +11,10 @@ on:
         required: true
 
 jobs:
-  checkout:
+  release:
     runs-on: ubuntu-latest
-    outputs:
-      repo-path: target-repo
+    environment:
+      name: jira
     steps:
       - name: Clone repository
         run: |
@@ -23,13 +23,6 @@ jobs:
           cd target-repo && git fetch --tags
           echo "✅ 클론 완료 및 태그 패치"
 
-  extract:
-    runs-on: ubuntu-latest
-    needs: checkout
-    outputs:
-      tickets: ${{ steps.extract.outputs.tickets }}
-      slack-message: ${{ steps.extract.outputs.slack-message }}
-    steps:
       - name: Extract Jira tickets from commits
         id: extract
         run: |
@@ -44,6 +37,7 @@ jobs:
             MSG="❌ 태그 $DEV_VERSION 이 존재하지 않습니다."
             echo "$MSG"
             echo "slack-message=$MSG" >> $GITHUB_OUTPUT
+            echo "tickets=" >> $GITHUB_OUTPUT
             exit 1
           }
 
@@ -51,6 +45,7 @@ jobs:
             MSG="❌ 태그 $VERSION_TAG 이 존재하지 않습니다."
             echo "$MSG"
             echo "slack-message=$MSG" >> $GITHUB_OUTPUT
+            echo "tickets=" >> $GITHUB_OUTPUT
             exit 1
           }
 
@@ -71,32 +66,24 @@ jobs:
           echo "$MSG"
           echo "slack-message=$MSG" >> $GITHUB_OUTPUT
 
-  jira-update:
-    runs-on: ubuntu-latest
-    needs: extract
-    environment:
-      name: jira
-    outputs:
-      slack-message: ${{ steps.update.outputs.slack-message }}
-    steps:
       - name: Update Jira Fix Versions
-        id: update
+        id: jira-update
         env:
           DOMAIN: ${{ secrets.DOMAIN }}
           USER: ${{ secrets.USER }}
           API_TOKEN: ${{ secrets.API_TOKEN }}
           VERSION: ${{ github.event.inputs.version }}
         run: |
-          IFS=' ' read -ra TICKETS <<< "${{ needs.extract.outputs.tickets }}"
+          IFS=' ' read -ra TICKETS <<< "${{ steps.extract.outputs.tickets }}"
           if [[ -z "${TICKETS[*]}" ]]; then
-            echo "ℹ️ Jira 티켓이 없어 업데이트 생략됨."
-            echo "slack-message=${{ needs.extract.outputs.slack-message }}" >> $GITHUB_OUTPUT
+            echo "ℹ️ Jira 티켓 없음. 업데이트 생략."
+            echo "slack-message=${{ steps.extract.outputs.slack-message }}" >> $GITHUB_OUTPUT
             exit 0
           fi
 
           echo "🎯 Jira 업데이트 시작: 버전 $VERSION"
-
           FAILED_TICKETS=()
+
           for TICKET in "${TICKETS[@]}"; do
             echo "➡️ $TICKET 업데이트 시도"
             RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
@@ -130,17 +117,13 @@ jobs:
           echo "$MSG"
           echo "slack-message=$MSG" >> $GITHUB_OUTPUT
 
-  slack-notify:
-    runs-on: ubuntu-latest
-    needs: [extract, jira-update]
-    environment:
-      name: slack
-    steps:
-      - name: Send Slack Message
+      - name: Send Slack Notification
+        if: always()
+        environment:
+          name: slack
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-          SLACK_MESSAGE: >-
-            ${{ needs.jira-update.result == 'success' && needs.jira-update.outputs.slack-message || needs.extract.outputs.slack-message }}
+          SLACK_MESSAGE: ${{ steps.jira-update.outputs.slack-message || steps.extract.outputs.slack-message }}
         run: |
           echo "📤 Slack 알림 전송 중..."
           echo "내용: $SLACK_MESSAGE"
