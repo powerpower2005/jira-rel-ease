@@ -6,73 +6,117 @@ on:
       version:
         description: '릴리스 버전 (예: 1.2.0)'
         required: true
+      repo:
+        description: '추적할 레포지토리 (예: org/repo)'
+        required: true
 
 jobs:
   update-fix-versions:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
+      - name: Checkout target repository
+        run: |
+          git clone --depth=1 "https://github.com/${{ github.event.inputs.repo }}.git" target-repo
+          cd target-repo && git fetch --tags
 
-      - name: Get commits between tags
-        id: get-commits
+      - name: Notify - Checkout 완료
+        if: success()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' --data "{
+            \"text\": \"📦 저장소 \`${{ github.event.inputs.repo }}\` 체크아웃 완료\"
+          }" "$SLACK_WEBHOOK_URL"
+
+      - name: Extract commits and Jira tickets
+        id: extract
         run: |
           VERSION="${{ github.event.inputs.version }}"
-          DEV_VERSION="${VERSION}-dev"
-          
-          # 두 태그 사이의 커밋 로그 가져오기 (각 커밋의 해시 앞 7자리)
-          COMMITS=$(git log --pretty=format:"%h %s" ${DEV_VERSION}..${VERSION})
-          echo "COMMITS<<EOF" >> $GITHUB_ENV
-          echo "$COMMITS" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+          DEV_VERSION="v${VERSION}-dev"
+          TICKET_PATTERN='[A-Z][A-Z0-9]+-[0-9]+'
 
-      - name: Extract Jira tickets and update fix versions
+          COMMITS=$(git -C target-repo log --pretty=format:"%s" ${DEV_VERSION}..${VERSION})
+          TICKETS=$(echo "$COMMITS" | grep -o -E "$TICKET_PATTERN" | sort -u | tr '\n' ' ')
+          echo "tickets=$TICKETS" >> $GITHUB_OUTPUT
+
+      - name: Notify - 커밋 및 Jira 티켓 추출 완료
+        if: success()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' --data "{
+            \"text\": \"🔍 커밋 및 Jira 티켓 추출 완료\"
+          }" "$SLACK_WEBHOOK_URL"
+
+      - name: Update Jira Fix Versions
+        id: update-jira
         env:
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_USER: ${{ secrets.JIRA_USER }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           VERSION: ${{ github.event.inputs.version }}
         run: |
-          # 커밋 메시지에서 Jira 티켓 ID 추출 (예: ABC-123)
-          TICKET_PATTERN='[A-Z]+-[0-9]+'
-          
-          # 중복 방지를 위한 처리된 티켓 목록
-          PROCESSED_TICKETS=()
-          
-          echo "커밋 로그에서 Jira 티켓 추출 및 Fix Version 업데이트 중..."
-          
-          while IFS= read -r COMMIT; do
-            if [[ -z "$COMMIT" ]]; then
-              continue
+          IFS=' ' read -ra TICKETS <<< "${{ steps.extract.outputs.tickets }}"
+          FAILED_TICKETS=()
+
+          for TICKET in "${TICKETS[@]}"; do
+            RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$JIRA_USER:$JIRA_API_TOKEN" \
+              -X PUT \
+              -H "Content-Type: application/json" \
+              --data "{\"update\":{\"fixVersions\":[{\"add\":{\"name\":\"$VERSION\"}}]}}" \
+              "$JIRA_BASE_URL/rest/api/2/issue/$TICKET")
+
+            if [[ "$RESPONSE" == "204" ]]; then
+              echo "✅ $TICKET updated"
+            else
+              echo "❌ $TICKET failed"
+              cat response.json
+              FAILED_TICKETS+=("$TICKET")
             fi
-            
-            # 커밋 메시지에서 티켓 ID 추출
-            TICKETS=$(echo "$COMMIT" | grep -o -E "$TICKET_PATTERN")
-            
-            for TICKET in $TICKETS; do
-              # 이미 처리된 티켓인지 확인
-              if [[ " ${PROCESSED_TICKETS[@]} " =~ " ${TICKET} " ]]; then
-                echo "티켓 $TICKET 이미 처리됨, 건너뜀"
-                continue
-              fi
-              
-              echo "티켓 $TICKET의 Fix Version을 $VERSION으로 업데이트 중..."
-              
-              # REST API를 사용하여 Fix Version 업데이트
-              curl -D- -u "$JIRA_USER:$JIRA_API_TOKEN" \
-                -X PUT \
-                -H "Content-Type: application/json" \
-                --data "{\"update\":{\"fixVersions\":[{\"add\":{\"name\":\"$VERSION\"}}]}}" \
-                "$JIRA_BASE_URL/rest/api/2/issue/$TICKET"
-              
-              # 처리된 티켓 목록에 추가
-              PROCESSED_TICKETS+=("$TICKET")
-              
-              # API 호출 사이에 짧은 지연 추가
-              sleep 1
-            done
-          done <<< "$COMMITS"
-          
-          echo "총 ${#PROCESSED_TICKETS[@]}개의 티켓이 업데이트됨"
+            sleep 1
+          done
+
+          if [[ ${#FAILED_TICKETS[@]} -ne 0 ]]; then
+            echo "SLACK_MESSAGE=⚠️ Jira 업데이트 실패: ${FAILED_TICKETS[*]}" >> $GITHUB_ENV
+            exit 1
+          fi
+
+          echo "SLACK_MESSAGE=🎉 Jira Fix Version 업데이트 완료: ${TICKETS[*]}" >> $GITHUB_ENV
+
+      - name: Notify - Jira 업데이트 성공
+        if: success() && steps.update-jira.conclusion == 'success'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_MESSAGE: ${{ env.SLACK_MESSAGE }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' --data "{
+            \"text\": \"$SLACK_MESSAGE\"
+          }" "$SLACK_WEBHOOK_URL"
+
+      - name: Notify - Jira 업데이트 실패
+        if: failure() && steps.update-jira.conclusion == 'failure'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_MESSAGE: ${{ env.SLACK_MESSAGE }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' --data "{
+            \"text\": \"$SLACK_MESSAGE\"
+          }" "$SLACK_WEBHOOK_URL"
+
+      - name: Notify - 전체 완료
+        if: success()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' --data "{
+            \"text\": \"✅ 전체 워크플로우 완료\"
+          }" "$SLACK_WEBHOOK_URL"
+
+      - name: Notify - 전체 실패
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' --data "{
+            \"text\": \"❌ 워크플로우 실패. 상세 로그를 확인하세요.\"
+          }" "$SLACK_WEBHOOK_URL"
