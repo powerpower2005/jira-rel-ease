@@ -107,6 +107,11 @@ jobs:
           FIX_NAME="${PREFIX} ${VERSION}"
           TICKETS="${{ steps.extract.outputs.tickets }}"
           PROJECT_KEY=$(echo "$TICKETS" | awk '{print $1}' | cut -d'-' -f1)
+          PROJECT_ID=$(curl -s -u "$USER:$API_TOKEN" \
+            -H "Accept: application/json" "$DOMAIN/rest/api/3/project/$PROJECT_KEY" | jq -r '.id')
+          
+          echo "🆔 프로젝트 ID: $PROJECT_ID"
+
 
           echo "🔎 프로젝트 키: $PROJECT_KEY"
           echo "🎯 FixVersion: $FIX_NAME"
@@ -124,13 +129,7 @@ jobs:
             exit 1
           fi
 
-          EXISTING=""
-          jq -r '.[].name' < response.json | while read -r VERSION_NAME; do
-            if [[ "$VERSION_NAME" == "$FIX_NAME" ]]; then
-              EXISTING="$VERSION_NAME"
-              break
-            fi
-          done
+          EXISTING=$(jq -r --arg FIX_NAME "$FIX_NAME" '.[] | select(.name == $FIX_NAME) | .name' < response.json)
 
           if [[ -z "$EXISTING" ]]; then
             echo "🔧 FixVersion $FIX_NAME 없음 → 생성"
@@ -138,7 +137,7 @@ jobs:
               -H "Content-Type: application/json" -X POST \
               --data "{
                 \"name\": \"$FIX_NAME\",
-                \"project\": \"$PROJECT_KEY\",
+                \"projectId\": \"$PROJECT_ID\",
                 \"description\": \"자동 생성된 FixVersion\",
                 \"released\": false
               }" "$DOMAIN/rest/api/3/version")
