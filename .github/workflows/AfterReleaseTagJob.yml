@@ -14,7 +14,7 @@ on:
         required: true
         default: 'false'
       fix_prefix:
-        description: 'FixVersion 접두어 -> prefix + space + version '
+        description: 'FixVersion 접두어 -> prefix + space + version'
         required: true
         default: ''
       from_tag:
@@ -109,18 +109,12 @@ jobs:
           PROJECT_KEY=$(echo "$TICKETS" | awk '{print $1}' | cut -d'-' -f1)
           PROJECT_ID=$(curl -s -u "$USER:$API_TOKEN" \
             -H "Accept: application/json" "$DOMAIN/rest/api/3/project/$PROJECT_KEY" | jq -r '.id')
-          
-          echo "🆔 프로젝트 ID: $PROJECT_ID"
 
-
-          echo "🔎 프로젝트 키: $PROJECT_KEY"
           echo "🎯 FixVersion: $FIX_NAME"
 
           RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
             -H "Accept: application/json" "$DOMAIN/rest/api/3/project/$PROJECT_KEY/versions")
 
-          echo "📨 응답 상태: $RESPONSE"
-          cat response.json
 
           if [[ "$RESPONSE" != "200" ]]; then
             MSG="❌ *FixVersion 조회 실패*\n상태 코드: $RESPONSE\n응답:\n$(cat response.json)"
@@ -162,14 +156,12 @@ jobs:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           VERSION: ${{ github.event.inputs.version }}
           FIX_NAME: "${{ github.event.inputs.fix_prefix }} ${{ github.event.inputs.version }}"
-
         run: |
           IFS=' ' read -ra TICKETS <<< "${{ steps.extract.outputs.tickets }}"
           if [[ -z "${TICKETS[*]}" ]]; then
             echo "slack-message=ℹ️ Jira 티켓 없음. 업데이트 생략." >> $GITHUB_OUTPUT
             exit 0
           fi
-
           FAILED_TICKETS=()
           for TICKET in "${TICKETS[@]}"; do
             echo "➡️ $TICKET FixVersion 추가 중..."
