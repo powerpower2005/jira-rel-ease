@@ -96,15 +96,15 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.version }}"
           PREFIX="${{ github.event.inputs.fix_prefix }}"
-          FIX_NAME="${PREFIX} ${VERSION}"
+          FIX_NAME="${PREFIX} ${VERSION}"  # ✅ 공백 포함 안전 처리
           TICKETS="${{ steps.extract.outputs.tickets }}"
           PROJECT_KEY=$(echo "$TICKETS" | awk '{print $1}' | cut -d'-' -f1)
 
           EXISTING=$(curl -s -u "$USER:$API_TOKEN" \
             -H "Accept: application/json" \
             "$DOMAIN/rest/api/3/project/$PROJECT_KEY/versions" \
-            | jq -r '.[].name' | grep -Fx "$FIX_NAME")
-
+            | jq -r '.[].name' | grep -Fx "$FIX_NAME")  # ✅ 비교도 따옴표
+  
           if [[ -z "$EXISTING" ]]; then
             echo "🔧 FixVersion $FIX_NAME 없음 → 생성"
             curl -s -u "$USER:$API_TOKEN" \
