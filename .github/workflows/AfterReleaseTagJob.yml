@@ -14,9 +14,9 @@ on:
         required: true
         default: 'false'
       fix_prefix:
-        description: 'FixVersion 접두어 -> prefix + space + version (REL 1.2.0) '
+        description: 'FixVersion 접두어 -> prefix + space + version '
         required: true
-        default: 'REL'
+        default: ''
       from_tag:
         description: '비교할 시작 태그 (예: 1.1.0 또는 v1.1.0-dev) default : false (-dev를 찾음)'
         required: false
