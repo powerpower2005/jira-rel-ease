@@ -171,24 +171,11 @@ jobs:
           FAILED_TICKETS=()
           for TICKET in "${TICKETS[@]}"; do
             echo "➡️ $TICKET FixVersion 추가 중..."
-            REQUEST_PAYLOAD=$(cat <<EOF
-            {
-              "update": {
-                "fixVersions": [
-                  {
-                    "add": {
-                      "name": "$FIX_NAME"
-                    }
-                  }
-                ]
-              }
-            }
-            EOF
-            )
-            
             RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
-              -X PUT -H "Content-Type: application/json" \
-              --data "$REQUEST_PAYLOAD" "$DOMAIN/rest/api/3/issue/$TICKET")
+            -H "Content-Type: application/json" -X POST \
+            --data "{\"name\":\"$FIX_NAME\",\"projectId\":$PROJECT_ID,\"description\":\"자동 생성된 FixVersion\",\"released\":false}" \
+            "$DOMAIN/rest/api/3/version")
+
 
             if [[ "$RESPONSE" == "204" ]]; then
               echo "✅ $TICKET 업데이트 성공"
