@@ -161,6 +161,8 @@ jobs:
           API_TOKEN: ${{ secrets.API_TOKEN }}
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           VERSION: ${{ github.event.inputs.version }}
+          FIX_NAME: "${{ github.event.inputs.fix_prefix }} ${{ github.event.inputs.version }}"
+
         run: |
           IFS=' ' read -ra TICKETS <<< "${{ steps.extract.outputs.tickets }}"
           if [[ -z "${TICKETS[*]}" ]]; then
@@ -172,10 +174,19 @@ jobs:
           for TICKET in "${TICKETS[@]}"; do
             echo "➡️ $TICKET FixVersion 추가 중..."
             RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
-            -H "Content-Type: application/json" -X POST \
-            --data "{\"name\":\"$FIX_NAME\",\"projectId\":$PROJECT_ID,\"description\":\"자동 생성된 FixVersion\",\"released\":false}" \
-            "$DOMAIN/rest/api/3/version")
-
+              -H "Content-Type: application/json" \
+              -X PUT "$DOMAIN/rest/api/3/issue/$TICKET" \
+              --data "{
+                \"update\": {
+                  \"fixVersions\": [
+                    {
+                      \"add\": {
+                        \"name\": \"$FIX_NAME\"
+                      }
+                    }
+                  ]
+                }
+              }")
 
             if [[ "$RESPONSE" == "204" ]]; then
               echo "✅ $TICKET 업데이트 성공"
