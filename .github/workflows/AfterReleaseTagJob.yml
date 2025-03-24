@@ -137,21 +137,25 @@ jobs:
             exit 1
           fi
 
-          EXISTING=$(jq -r '.[].name' < response.json | grep -Fx "$FIX_NAME")
+          jq -r '.[].name' < response.json | while read -r VERSION_NAME; do
+            if [[ "$VERSION_NAME" == "$FIX_NAME" ]]; then
+              EXISTING="$VERSION_NAME"
+              break
+            fi
+          done
 
-          if [[ -z "$EXISTING" ]]; then
-            echo "🔧 FixVersion $FIX_NAME 없음 → 생성"
+          echo "🔧 FixVersion $FIX_NAME 없음 → 생성"
 
-            RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
-              -H "Content-Type: application/json" \
-              -X POST \
-              --data "{
-                \"name\": \"$FIX_NAME\",
-                \"project\": \"$PROJECT_KEY\",
-                \"description\": \"자동 생성된 FixVersion\",
-                \"released\": false
-              }" "$DOMAIN/rest/api/3/version")
-
+          RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -X POST \
+            --data "{
+              \"name\": \"$FIX_NAME\",
+              \"project\": \"$PROJECT_KEY\",
+              \"description\": \"자동 생성된 FixVersion\",
+              \"released\": false
+            }" "$DOMAIN/rest/api/3/version")
+  
             if [[ "$RESPONSE" != "201" ]]; then
               echo "❌ FixVersion 생성 실패 (코드: $RESPONSE)"
               cat response.json
