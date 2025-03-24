@@ -4,15 +4,22 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '릴리스 버전 (예: 1.2.0)'
+        description: '릴리스 버전 (ex. 1.2.0)'
         required: true
       repo:
-        description: '대상 레포 (예: owner/repo)'
+        description: '대상 레포 (ex. org/repo)'
         required: true
       use_pat:
         description: '외부 레포 접근에 PAT 사용할지 여부 (true/false)'
         required: true
         default: 'false'
+      fix_prefix:
+        description: 'FixVersion 접두어 -> prefix + space + version (REL 1.2.0) '
+        required: true
+        default: 'REL'
+      from_tag:
+        description: '비교할 시작 태그 (예: 1.1.0 또는 v1.1.0-dev) default : false (-dev를 찾음)'
+        required: false
 
 jobs:
   release:
@@ -39,33 +46,35 @@ jobs:
           MSG="📦 레포지토리 체크아웃 완료: $REPO"
           curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":package:\"}" "$SLACK_WEBHOOK"
 
-      - name: Extract Jira tickets from commits
+      - name: Extract Jira tickets from commits  # ✅ [수정됨]
         id: extract
         run: |
           VERSION="${{ github.event.inputs.version }}"
-          DEV_VERSION="v${VERSION}-dev"
-          VERSION_TAG="${VERSION}"
-          TICKET_PATTERN='[A-Z][A-Z0-9]+-[0-9]+'
+          FROM_TAG="${{ github.event.inputs.from_tag }}"
+          if [[ -z "$FROM_TAG" ]]; then
+            FROM_TAG="v${VERSION}-dev"
+          fi
+          TO_TAG="${VERSION}"
+          echo "🔍 커밋 범위: $FROM_TAG .. $TO_TAG"
 
-          echo "🔍 버전 범위: $DEV_VERSION .. $VERSION_TAG"
-
-          git -C target-repo rev-parse "$DEV_VERSION" >/dev/null 2>&1 || {
-            echo "slack-message=❌ 태그 $DEV_VERSION 이 존재하지 않습니다." >> $GITHUB_OUTPUT
+          git -C target-repo rev-parse "$FROM_TAG" >/dev/null 2>&1 || {
+            echo "slack-message=❌ 태그 $FROM_TAG 이 존재하지 않습니다." >> $GITHUB_OUTPUT
             exit 1
           }
 
-          git -C target-repo rev-parse "$VERSION_TAG" >/dev/null 2>&1 || {
-            echo "slack-message=❌ 태그 $VERSION_TAG 이 존재하지 않습니다." >> $GITHUB_OUTPUT
+          git -C target-repo rev-parse "$TO_TAG" >/dev/null 2>&1 || {
+            echo "slack-message=❌ 태그 $TO_TAG 이 존재하지 않습니다." >> $GITHUB_OUTPUT
             exit 1
           }
 
-          COMMITS=$(git -C target-repo log --pretty=format:"%h %s" ${DEV_VERSION}..${VERSION_TAG})
+          COMMITS=$(git -C target-repo log --pretty=format:"%h|%an|%s" ${FROM_TAG}..${TO_TAG})
           if [[ -z "$COMMITS" ]]; then
-            echo "slack-message=⚠️ ${DEV_VERSION} ~ ${VERSION_TAG} 사이에 커밋이 없습니다." >> $GITHUB_OUTPUT
+            echo "slack-message=⚠️ $FROM_TAG ~ $TO_TAG 사이에 커밋이 없습니다." >> $GITHUB_OUTPUT
             echo "tickets=" >> $GITHUB_OUTPUT
             exit 0
           fi
 
+          TICKET_PATTERN='[A-Z][A-Z0-9]+-[0-9]+'
           TICKETS=$(echo "$COMMITS" | grep -o -E "$TICKET_PATTERN" | sort -u | tr '\n' ' ')
           COMMITS_BASE64=$(echo "$COMMITS" | base64 -w 0)
 
@@ -81,6 +90,39 @@ jobs:
         run: |
           printf '%s\n' "$MSG"
           curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":mag:\"}" "$SLACK_WEBHOOK"
+
+      - name: Create FixVersion if not exists
+        id: ensure-fixversion
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          PREFIX="${{ github.event.inputs.fix_prefix }}"
+          FIX_NAME="${PREFIX} ${VERSION}"
+          TICKETS="${{ steps.extract.outputs.tickets }}"
+          PROJECT_KEY=$(echo "$TICKETS" | awk '{print $1}' | cut -d'-' -f1)
+
+          EXISTING=$(curl -s -u "$USER:$API_TOKEN" \
+            -H "Accept: application/json" \
+            "$DOMAIN/rest/api/3/project/$PROJECT_KEY/versions" \
+            | jq -r '.[].name' | grep -Fx "$FIX_NAME")
+
+          if [[ -z "$EXISTING" ]]; then
+            echo "🔧 FixVersion $FIX_NAME 없음 → 생성"
+            curl -s -u "$USER:$API_TOKEN" \
+              -H "Content-Type: application/json" \
+              -X POST \
+              --data "{
+                \"name\": \"$FIX_NAME\",
+                \"project\": \"$PROJECT_KEY\",
+                \"description\": \"자동 생성된 FixVersion\",
+                \"released\": false
+              }" "$DOMAIN/rest/api/3/version"
+          else
+            echo "✅ FixVersion $FIX_NAME 이미 존재"
+          fi
+        env:
+          DOMAIN: ${{ secrets.DOMAIN }}
+          USER: ${{ secrets.USER }}
+          API_TOKEN: ${{ secrets.API_TOKEN }}
 
       - name: Update Jira Fix Versions
         id: update-jira
@@ -153,9 +195,9 @@ jobs:
               MSG+="• <${DOMAIN}/browse/${TICKET}|${TICKET}>\n"
             done
 
-            MSG+="\n🔀 *포함된 커밋:*\n"
-            while IFS= read -r COMMIT; do
-              MSG+="• $COMMIT\n"
+            MSG+="\n🔀 *포함된 커밋 (작성자 포함):*\n"
+            while IFS='|' read -r HASH AUTHOR MESSAGE; do
+              MSG+="• $HASH ($AUTHOR): $MESSAGE\n"
             done <<< "$COMMITS"
           fi
 
