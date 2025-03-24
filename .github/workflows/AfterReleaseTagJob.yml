@@ -18,7 +18,7 @@ on:
         required: true
         default: ''
       from_tag:
-        description: '비교할 시작 태그 (예: 1.1.0 또는 v1.1.0-dev) default : false (-dev를 찾음)'
+        description: '비교할 시작 태그 (예: 1.1.0 또는 v1.1.0-dev)'
         required: false
 
 jobs:
@@ -45,11 +45,10 @@ jobs:
         run: |
           MSG="📦 레포지토리 체크아웃 완료: $REPO"
           echo "$MSG"
-          echo "$MSG" | jq -Rs '{username: "jira-bot", text: ., icon_emoji: ":package:"}' > payload.json
-          curl -X POST -H "Content-Type: application/json" --data @payload.json "$SLACK_WEBHOOK"
+          curl -X POST --data-urlencode \
+            "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":package:\"}" "$SLACK_WEBHOOK"
 
-
-      - name: Extract Jira tickets from commits  # ✅ [수정됨]
+      - name: Extract Jira tickets from commits
         id: extract
         run: |
           VERSION="${{ github.event.inputs.version }}"
@@ -92,9 +91,8 @@ jobs:
           MSG: ${{ steps.extract.outputs.slack-message }}
         run: |
           echo "$MSG"
-          echo "$MSG" | jq -Rs '{username: "jira-bot", text: ., icon_emoji: ":mag:"}' > payload.json
-          curl -X POST -H "Content-Type: application/json" --data @payload.json "$SLACK_WEBHOOK"
-
+          curl -X POST --data-urlencode \
+            "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":mag:\"}" "$SLACK_WEBHOOK"
 
       - name: Create FixVersion if not exists
         id: ensure-fixversion
@@ -113,30 +111,20 @@ jobs:
           echo "🔎 프로젝트 키: $PROJECT_KEY"
           echo "🎯 FixVersion: $FIX_NAME"
 
-          # FixVersion 존재 여부 확인
           RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
-            -H "Accept: application/json" \
-            "$DOMAIN/rest/api/3/project/$PROJECT_KEY/versions")
+            -H "Accept: application/json" "$DOMAIN/rest/api/3/project/$PROJECT_KEY/versions")
 
           echo "📨 응답 상태: $RESPONSE"
-          echo "📄 응답 본문:"
           cat response.json
-          
-          # Slack 메시지용 - response 내용을 escape 없이 전송
-          MSG="❌ *FixVersion 조회 실패*\n상태 코드: $RESPONSE\n응답:\n$(cat response.json)"
-          echo "$MSG" | jq -Rs --arg emoji ":x:" '{username: "jira-bot", text: ., icon_emoji: $emoji}' > payload.json
-          curl -X POST -H "Content-Type: application/json" --data @payload.json "$SLACK_WEBHOOK"
-
 
           if [[ "$RESPONSE" != "200" ]]; then
-            echo "❌ FixVersion 조회 실패 (코드: $RESPONSE)"
-            cat response.json
             MSG="❌ *FixVersion 조회 실패*\n상태 코드: $RESPONSE\n응답:\n$(cat response.json)"
-            echo "$MSG" | jq -Rs '{username: "jira-bot", text: ., icon_emoji: ":x:"}' > payload.json
-            curl -X POST -H "Content-Type: application/json" --data @payload.json "$SLACK_WEBHOOK"
+            curl -X POST --data-urlencode \
+              "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":x:\"}" "$SLACK_WEBHOOK"
             exit 1
           fi
 
+          EXISTING=""
           jq -r '.[].name' < response.json | while read -r VERSION_NAME; do
             if [[ "$VERSION_NAME" == "$FIX_NAME" ]]; then
               EXISTING="$VERSION_NAME"
@@ -144,31 +132,27 @@ jobs:
             fi
           done
 
-          echo "🔧 FixVersion $FIX_NAME 없음 → 생성"
+          if [[ -z "$EXISTING" ]]; then
+            echo "🔧 FixVersion $FIX_NAME 없음 → 생성"
+            RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
+              -H "Content-Type: application/json" -X POST \
+              --data "{
+                \"name\": \"$FIX_NAME\",
+                \"project\": \"$PROJECT_KEY\",
+                \"description\": \"자동 생성된 FixVersion\",
+                \"released\": false
+              }" "$DOMAIN/rest/api/3/version")
 
-          RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
-            -H "Content-Type: application/json" \
-            -X POST \
-            --data "{
-              \"name\": \"$FIX_NAME\",
-              \"project\": \"$PROJECT_KEY\",
-              \"description\": \"자동 생성된 FixVersion\",
-              \"released\": false
-            }" "$DOMAIN/rest/api/3/version")
-  
             if [[ "$RESPONSE" != "201" ]]; then
-              echo "❌ FixVersion 생성 실패 (코드: $RESPONSE)"
-              cat response.json
               MSG="❌ *FixVersion 생성 실패*\n상태 코드: $RESPONSE\n응답:\n$(cat response.json)"
-              echo "$MSG" | jq -Rs '{username: "jira-bot", text: ., icon_emoji: ":x:"}' > payload.json
-              curl -X POST -H "Content-Type: application/json" --data @payload.json "$SLACK_WEBHOOK"
+              curl -X POST --data-urlencode \
+                "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":x:\"}" "$SLACK_WEBHOOK"
               exit 1
             fi
             echo "✅ FixVersion $FIX_NAME 생성 완료"
           else
             echo "✅ FixVersion $FIX_NAME 이미 존재"
           fi
-
 
       - name: Update Jira Fix Versions
         id: update-jira
@@ -196,18 +180,14 @@ jobs:
             if [[ "$RESPONSE" == "204" ]]; then
               echo "✅ $TICKET 업데이트 성공"
             elif [[ "$RESPONSE" == "401" || "$RESPONSE" == "403" ]]; then
-              echo "❌ Jira 인증 실패 ($RESPONSE)"
-              cat response.json
               MSG="❌ *Jira 인증 실패*\n티켓: $TICKET\n상태 코드: $RESPONSE\n응답:\n$(cat response.json)"
-              echo "$MSG" | jq -Rs '{username: "jira-bot", text: ., icon_emoji: ":x:"}' > payload.json
-              curl -X POST -H "Content-Type: application/json" --data @payload.json "$SLACK_WEBHOOK"
+              curl -X POST --data-urlencode \
+                "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":x:\"}" "$SLACK_WEBHOOK"
               exit 1
             else
-              echo "❌ $TICKET 업데이트 실패 (코드: $RESPONSE)"
-              cat response.json
               MSG="⚠️ *FixVersion 업데이트 실패*\n티켓: $TICKET\n상태 코드: $RESPONSE\n응답:\n$(cat response.json)"
-              echo "$MSG" | jq -Rs '{username: "jira-bot", text: ., icon_emoji: ":warning:"}' > payload.json
-              curl -X POST -H "Content-Type: application/json" --data @payload.json "$SLACK_WEBHOOK"
+              curl -X POST --data-urlencode \
+                "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":warning:\"}" "$SLACK_WEBHOOK"
               FAILED_TICKETS+=("$TICKET")
             fi
             sleep 1
@@ -220,7 +200,6 @@ jobs:
 
           echo "slack-message=🎉 Jira Fix Version 업데이트 성공" >> $GITHUB_OUTPUT
 
-
       - name: Notify Jira update
         if: always()
         env:
@@ -228,9 +207,8 @@ jobs:
           MSG: ${{ steps.update-jira.outputs.slack-message }}
         run: |
           echo "$MSG"
-          echo "$MSG" | jq -Rs '{username: "jira-bot", text: ., icon_emoji: ":rocket:"}' > payload.json
-          curl -X POST -H "Content-Type: application/json" --data @payload.json "$SLACK_WEBHOOK"
-
+          curl -X POST --data-urlencode \
+            "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":rocket:\"}" "$SLACK_WEBHOOK"
 
       - name: Send summary Slack message
         if: always()
@@ -245,11 +223,10 @@ jobs:
             MSG="ℹ️ No Jira tickets found for version $VERSION. No updates made."
           else
             COMMITS=$(echo "$COMMITS_BASE64" | base64 -d)
-
             FIXVERSION_LINK="$DOMAIN/issues/?jql=fixVersion=${VERSION}"
+
             MSG="📦 *Release $VERSION FixVersion 최종 요약*\n\n"
             MSG+="🔗 <${FIXVERSION_LINK}|FixVersion: $VERSION>\n\n"
-
             MSG+="🎫 *티켓 목록:*\n"
             for TICKET in $TICKETS; do
               MSG+="• <${DOMAIN}/browse/${TICKET}|${TICKET}>\n"
@@ -262,5 +239,5 @@ jobs:
           fi
 
           echo "$MSG"
-          echo "$MSG" | jq -Rs '{username: "jira-bot", text: ., icon_emoji: ":memo:"}' > payload.json
-          curl -X POST -H "Content-Type: application/json" --data @payload.json "$SLACK_WEBHOOK"
+          curl -X POST --data-urlencode \
+            "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":memo:\"}" "$SLACK_WEBHOOK"
