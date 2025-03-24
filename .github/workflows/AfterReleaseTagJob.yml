@@ -91,77 +91,112 @@ jobs:
           printf '%s\n' "$MSG"
           curl -X POST --data-urlencode "payload={\"username\":\"jira-bot\",\"text\":\"$MSG\",\"icon_emoji\":\":mag:\"}" "$SLACK_WEBHOOK"
 
-      - name: Create FixVersion if not exists
-        id: ensure-fixversion
-        run: |
-          VERSION="${{ github.event.inputs.version }}"
-          PREFIX="${{ github.event.inputs.fix_prefix }}"
-          FIX_NAME="${PREFIX} ${VERSION}"  # ✅ 공백 포함 안전 처리
-          TICKETS="${{ steps.extract.outputs.tickets }}"
-          PROJECT_KEY=$(echo "$TICKETS" | awk '{print $1}' | cut -d'-' -f1)
+            - name: Create FixVersion if not exists
+              id: ensure-fixversion
+              env:
+                DOMAIN: ${{ secrets.DOMAIN }}
+                USER: ${{ secrets.USER }}
+                API_TOKEN: ${{ secrets.API_TOKEN }}
+                SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+              run: |
+                VERSION="${{ github.event.inputs.version }}"
+                PREFIX="${{ github.event.inputs.fix_prefix }}"
+                FIX_NAME="${PREFIX} ${VERSION}"
+                TICKETS="${{ steps.extract.outputs.tickets }}"
+                PROJECT_KEY=$(echo "$TICKETS" | awk '{print $1}' | cut -d'-' -f1)
+      
+                echo "🔎 프로젝트 키: $PROJECT_KEY"
+                echo "🎯 FixVersion: $FIX_NAME"
+      
+                # FixVersion 존재 여부 확인
+                RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
+                  -H "Accept: application/json" \
+                  "$DOMAIN/rest/api/3/project/$PROJECT_KEY/versions")
+      
+                if [[ "$RESPONSE" != "200" ]]; then
+                  echo "❌ FixVersion 조회 실패 (코드: $RESPONSE)"
+                  cat response.json
+                  MSG="❌ *FixVersion 조회 실패*\n상태 코드: $RESPONSE\n응답:\n$(cat response.json)"
+                  curl -X POST --data-urlencode "payload={\"username\": \"jira-bot\", \"text\": \"$MSG\", \"icon_emoji\": \":x:\"}" "$SLACK_WEBHOOK"
+                  exit 1
+                fi
+      
+                EXISTING=$(jq -r '.[].name' < response.json | grep -Fx "$FIX_NAME")
+      
+                if [[ -z "$EXISTING" ]]; then
+                  echo "🔧 FixVersion $FIX_NAME 없음 → 생성"
+      
+                  RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
+                    -H "Content-Type: application/json" \
+                    -X POST \
+                    --data "{
+                      \"name\": \"$FIX_NAME\",
+                      \"project\": \"$PROJECT_KEY\",
+                      \"description\": \"자동 생성된 FixVersion\",
+                      \"released\": false
+                    }" "$DOMAIN/rest/api/3/version")
+      
+                  if [[ "$RESPONSE" != "201" ]]; then
+                    echo "❌ FixVersion 생성 실패 (코드: $RESPONSE)"
+                    cat response.json
+                    MSG="❌ *FixVersion 생성 실패*\n상태 코드: $RESPONSE\n응답:\n$(cat response.json)"
+                    curl -X POST --data-urlencode "payload={\"username\": \"jira-bot\", \"text\": \"$MSG\", \"icon_emoji\": \":x:\"}" "$SLACK_WEBHOOK"
+                    exit 1
+                  fi
+                  echo "✅ FixVersion $FIX_NAME 생성 완료"
+                else
+                  echo "✅ FixVersion $FIX_NAME 이미 존재"
+                fi
 
-          EXISTING=$(curl -s -u "$USER:$API_TOKEN" \
-            -H "Accept: application/json" \
-            "$DOMAIN/rest/api/3/project/$PROJECT_KEY/versions" \
-            | jq -r '.[].name' | grep -Fx "$FIX_NAME")  # ✅ 비교도 따옴표
-  
-          if [[ -z "$EXISTING" ]]; then
-            echo "🔧 FixVersion $FIX_NAME 없음 → 생성"
-            curl -s -u "$USER:$API_TOKEN" \
-              -H "Content-Type: application/json" \
-              -X POST \
-              --data "{
-                \"name\": \"$FIX_NAME\",
-                \"project\": \"$PROJECT_KEY\",
-                \"description\": \"자동 생성된 FixVersion\",
-                \"released\": false
-              }" "$DOMAIN/rest/api/3/version"
-          else
-            echo "✅ FixVersion $FIX_NAME 이미 존재"
-          fi
-        env:
-          DOMAIN: ${{ secrets.DOMAIN }}
-          USER: ${{ secrets.USER }}
-          API_TOKEN: ${{ secrets.API_TOKEN }}
 
-      - name: Update Jira Fix Versions
-        id: update-jira
-        env:
-          DOMAIN: ${{ secrets.DOMAIN }}
-          USER: ${{ secrets.USER }}
-          API_TOKEN: ${{ secrets.API_TOKEN }}
-          VERSION: ${{ github.event.inputs.version }}
-        run: |
-          IFS=' ' read -ra TICKETS <<< "${{ steps.extract.outputs.tickets }}"
-          if [[ -z "${TICKETS[*]}" ]]; then
-            echo "slack-message=ℹ️ Jira 티켓 없음. 업데이트 생략." >> $GITHUB_OUTPUT
-            exit 0
-          fi
+            - name: Update Jira Fix Versions
+              id: update-jira
+              env:
+                DOMAIN: ${{ secrets.DOMAIN }}
+                USER: ${{ secrets.USER }}
+                API_TOKEN: ${{ secrets.API_TOKEN }}
+                SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+                VERSION: ${{ github.event.inputs.version }}
+              run: |
+                IFS=' ' read -ra TICKETS <<< "${{ steps.extract.outputs.tickets }}"
+                if [[ -z "${TICKETS[*]}" ]]; then
+                  echo "slack-message=ℹ️ Jira 티켓 없음. 업데이트 생략." >> $GITHUB_OUTPUT
+                  exit 0
+                fi
+      
+                FAILED_TICKETS=()
+                for TICKET in "${TICKETS[@]}"; do
+                  echo "➡️ $TICKET FixVersion 업데이트 중..."
+                  RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
+                    -X PUT -H "Content-Type: application/json" \
+                    --data "{\"update\":{\"fixVersions\":[{\"add\":{\"name\":\"$VERSION\"}}]}}" \
+                    "$DOMAIN/rest/api/2/issue/$TICKET")
+      
+                  if [[ "$RESPONSE" == "204" ]]; then
+                    echo "✅ $TICKET 업데이트 성공"
+                  elif [[ "$RESPONSE" == "401" || "$RESPONSE" == "403" ]]; then
+                    echo "❌ Jira 인증 실패 ($RESPONSE)"
+                    cat response.json
+                    MSG="❌ *Jira 인증 실패*\n티켓: $TICKET\n상태 코드: $RESPONSE\n응답:\n$(cat response.json)"
+                    curl -X POST --data-urlencode "payload={\"username\": \"jira-bot\", \"text\": \"$MSG\", \"icon_emoji\": \":x:\"}" "$SLACK_WEBHOOK"
+                    exit 1
+                  else
+                    echo "❌ $TICKET 업데이트 실패 (코드: $RESPONSE)"
+                    cat response.json
+                    MSG="⚠️ *FixVersion 업데이트 실패*\n티켓: $TICKET\n상태 코드: $RESPONSE\n응답:\n$(cat response.json)"
+                    curl -X POST --data-urlencode "payload={\"username\": \"jira-bot\", \"text\": \"$MSG\", \"icon_emoji\": \":warning:\"}" "$SLACK_WEBHOOK"
+                    FAILED_TICKETS+=("$TICKET")
+                  fi
+                  sleep 1
+                done
+      
+                if [[ ${#FAILED_TICKETS[@]} -ne 0 ]]; then
+                  echo "slack-message=⚠️ 일부 Jira 티켓 업데이트 실패: ${FAILED_TICKETS[*]}" >> $GITHUB_OUTPUT
+                  exit 1
+                fi
+      
+                echo "slack-message=🎉 Jira Fix Version 업데이트 성공" >> $GITHUB_OUTPUT
 
-          FAILED_TICKETS=()
-          for TICKET in "${TICKETS[@]}"; do
-            RESPONSE=$(curl -s -w "%{http_code}" -o response.json -u "$USER:$API_TOKEN" \
-              -X PUT -H "Content-Type: application/json" \
-              --data "{\"update\":{\"fixVersions\":[{\"add\":{\"name\":\"$VERSION\"}}]}}" \
-              "$DOMAIN/rest/api/2/issue/$TICKET")
-
-            if [[ "$RESPONSE" == "204" ]]; then
-              continue
-            elif [[ "$RESPONSE" == "401" || "$RESPONSE" == "403" ]]; then
-              echo "slack-message=❌ Jira 인증 실패 ($RESPONSE)" >> $GITHUB_OUTPUT
-              exit 1
-            else
-              FAILED_TICKETS+=("$TICKET")
-            fi
-            sleep 1
-          done
-
-          if [[ ${#FAILED_TICKETS[@]} -ne 0 ]]; then
-            echo "slack-message=⚠️ 일부 Jira 티켓 업데이트 실패: ${FAILED_TICKETS[*]}" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-
-          echo "slack-message=🎉 Jira Fix Version 업데이트 성공" >> $GITHUB_OUTPUT
 
       - name: Notify Jira update
         if: always()
