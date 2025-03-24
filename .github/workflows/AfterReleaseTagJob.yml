@@ -231,23 +231,22 @@ jobs:
             MSG="ℹ️ No Jira tickets found for version $VERSION. No updates made."
           else
             COMMITS=$(echo "$COMMITS_BASE64" | base64 -d)
-      
+
             FIXVERSION_LINK="$DOMAIN/issues/?jql=fixVersion=${VERSION}"
             MSG="📦 *Release $VERSION FixVersion 최종 요약*\n\n"
             MSG+="🔗 <${FIXVERSION_LINK}|FixVersion: $VERSION>\n\n"
-      
+
             MSG+="🎫 *티켓 목록:*\n"
             for TICKET in $TICKETS; do
               MSG+="• <${DOMAIN}/browse/${TICKET}|${TICKET}>\n"
             done
-      
+
             MSG+="\n🔀 *포함된 커밋 (작성자 포함):*\n"
             while IFS='|' read -r HASH AUTHOR MESSAGE; do
               MSG+="• $HASH ($AUTHOR): $MESSAGE\n"
             done <<< "$COMMITS"
           fi
-      
+
           echo "$MSG"
           echo "$MSG" | jq -Rs '{username: "jira-bot", text: ., icon_emoji: ":memo:"}' > payload.json
           curl -X POST -H "Content-Type: application/json" --data @payload.json "$SLACK_WEBHOOK"
-
