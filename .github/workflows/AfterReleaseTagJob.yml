@@ -118,6 +118,16 @@ jobs:
             -H "Accept: application/json" \
             "$DOMAIN/rest/api/3/project/$PROJECT_KEY/versions")
 
+          echo "📨 응답 상태: $RESPONSE"
+          echo "📄 응답 본문:"
+          cat response.json
+          
+          # Slack 메시지용 - response 내용을 escape 없이 전송
+          MSG="❌ *FixVersion 조회 실패*\n상태 코드: $RESPONSE\n응답:\n$(cat response.json)"
+          echo "$MSG" | jq -Rs --arg emoji ":x:" '{username: "jira-bot", text: ., icon_emoji: $emoji}' > payload.json
+          curl -X POST -H "Content-Type: application/json" --data @payload.json "$SLACK_WEBHOOK"
+
+
           if [[ "$RESPONSE" != "200" ]]; then
             echo "❌ FixVersion 조회 실패 (코드: $RESPONSE)"
             cat response.json
