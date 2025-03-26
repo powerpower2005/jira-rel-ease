@@ -2,9 +2,7 @@
 name: Update Jira Deployment
 
 on:
-  push:
-    branches:
-      - main
+  
 
 jobs:
   deploy-infra:
