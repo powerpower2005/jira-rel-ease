@@ -46,3 +46,16 @@
    - 이 조건 하에서 워크플로우는 **멱등성(idempotency)**을 가짐
 
 > 이러한 전제 조건 하에서는 같은 파라미터로 워크플로우를 반복 실행해도 오류 없이 동일한 결과를 생성
+
+
+---
+
+## 🔐 Secrets
+
+| 이름 | 설명 |
+|------|------|
+| `REPO_PAT` | 외부 레포 접근용 GitHub PAT (사용 시 `use_pat=true`) |
+| `SLACK_WEBHOOK` | Slack Webhook URL |
+| `DOMAIN` | Jira 도메인 (예: `https://your-domain.atlassian.net`) |
+| `USER` | Jira API 접근 이메일 |
+| `API_TOKEN` | Jira API 토큰 |
