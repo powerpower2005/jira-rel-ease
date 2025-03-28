@@ -1,0 +1,104 @@
+name: Update Metadata
+
+on:
+  push:
+    paths:
+      - 'jira-deployment/dev/**'
+      - 'jira-deployment/prod/**'
+      - 'jira-deployment/staging/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: '메타데이터를 업데이트할 환경'
+        required: true
+        default: 'stage'
+        type: choice
+        options:
+          - prod
+          - stage
+          - dev
+
+jobs:
+  update-metadata:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      deployments: write
+    
+    steps:
+      # 1. 환경 자동 감지
+      - name: Detect Environment
+        id: detect-env
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            CHANGED_PATH=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^jira-deployment/' | head -n1)
+            if [[ "$CHANGED_PATH" == *"/dev/"* ]]; then
+              echo "environment=dev" >> $GITHUB_OUTPUT
+            elif [[ "$CHANGED_PATH" == *"/prod/"* ]]; then
+              echo "environment=prod" >> $GITHUB_OUTPUT
+            elif [[ "$CHANGED_PATH" == *"/staging/"* ]]; then
+              echo "environment=stage" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          fi
+
+      # 2. 코드 체크아웃
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 3. 변경된 파일 확인
+      - name: Check Changed Files
+        id: changed-files
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^jira-deployment/')
+            echo "변경된 파일 목록:"
+            echo "$CHANGED_FILES"
+            echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+            echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+
+            # 각 변경된 파일의 상세 내용 출력
+            while IFS= read -r file; do
+              echo "📄 파일: $file"
+              echo "변경 내용:"
+              git diff ${{ github.event.before }} ${{ github.sha }} -- "$file" | cat
+              echo "----------------------------------------"
+            done <<< "$CHANGED_FILES"
+          fi
+
+      # 4. Jira 이슈 키 추출
+      - name: Extract Jira Issue Keys
+        id: extract-keys
+        run: |
+          ISSUE_KEYS=$(git log -1 --pretty=%B | grep -oE '[A-Z]+-[0-9]+' || echo "No issue key found")
+          echo "📌 추출된 Jira Issue Keys: $ISSUE_KEYS"
+          echo "issue-keys=$ISSUE_KEYS" >> $GITHUB_OUTPUT
+
+      # 5. Deployment 생성
+      - name: Create Deployment
+        id: create-deployment
+        uses: chrnorm/deployment-action@releases/v2
+        with:
+          token: ${{ github.token }}
+          environment: ${{ steps.detect-env.outputs.environment }}
+          ref: ${{ github.sha }}
+          description: "Metadata update deployment to ${{ steps.detect-env.outputs.environment }}"
+
+      # 6. Deployment 상태 업데이트
+      - name: Update Deployment Status
+        uses: chrnorm/deployment-status@releases/v2
+        if: success()
+        with:
+          token: ${{ github.token }}
+          state: "success"
+          deployment-id: ${{ steps.create-deployment.outputs.deployment_id }}
+          
+      - name: Update Deployment Status on Failure
+        if: failure()
+        uses: chrnorm/deployment-status@releases/v2
+        with:
+          token: ${{ github.token }}
+          state: "failure"
+          deployment-id: ${{ steps.create-deployment.outputs.deployment_id }}
