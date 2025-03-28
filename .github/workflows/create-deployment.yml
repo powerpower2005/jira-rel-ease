@@ -33,11 +33,12 @@ jobs:
         with:
           ref: ${{ github.event.inputs.branch }}
 
-      # 2. Jira 이슈 키 추출 (선택 사항)
+      # 2. Jira 이슈 키 추출
       - name: Extract Jira Issue Keys
         id: extract-keys
         run: |
           ISSUE_KEYS=$(git log -1 --pretty=%B | grep -oE '[A-Z]+-[0-9]+' || echo "No issue key found")
+          echo "📌 추출된 Jira Issue Keys: $ISSUE_KEYS"
           echo "issue-keys=$ISSUE_KEYS" >> $GITHUB_OUTPUT
 
       # 3. 배포 생성
