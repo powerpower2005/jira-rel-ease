@@ -29,7 +29,7 @@ jobs:
     steps:
       # 1. 지정된 브랜치 체크아웃
       - name: Checkout specified branch
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.inputs.branch }}
 
@@ -43,7 +43,7 @@ jobs:
       # 3. 배포 생성
       - name: Create Deployment
         id: create-deployment
-        uses: chrnorm/deployment-action@releases/v2
+        uses: chrnorm/deployment-action@v2
         with:
           token: ${{ github.token }}
           environment: ${{ github.event.inputs.environment }}
@@ -64,7 +64,7 @@ jobs:
 
       # 5. 배포 상태 업데이트
       - name: Update Deployment Status
-        uses: chrnorm/deployment-status@releases/v2
+        uses: chrnorm/deployment-status@v2
         if: success()
         with:
           token: ${{ github.token }}
@@ -73,7 +73,7 @@ jobs:
           
       - name: Update Deployment Status on Failure
         if: failure()
-        uses: chrnorm/deployment-status@releases/v2
+        uses: chrnorm/deployment-status@v2
         with:
           token: ${{ github.token }}
           state: "failure"
