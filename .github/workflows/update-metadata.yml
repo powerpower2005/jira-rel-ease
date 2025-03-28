@@ -26,7 +26,11 @@ jobs:
       deployments: write
     
     steps:
-      # 1. 환경 자동 감지
+      # 1. 코드 체크아웃
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 2. 환경 자동 감지
       - name: Detect Environment
         id: detect-env
         run: |
@@ -42,10 +46,6 @@ jobs:
           else
             echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
           fi
-
-      # 2. 코드 체크아웃
-      - name: Checkout code
-        uses: actions/checkout@v3
 
       # 3. 변경된 파일 확인
       - name: Check Changed Files
