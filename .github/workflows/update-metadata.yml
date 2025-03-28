@@ -31,7 +31,7 @@ jobs:
         id: detect-env
         run: |
           if [[ "${{ github.event_name }}" == "push" ]]; then
-            CHANGED_PATH=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^jira-deployment/' | head -n1)
+            CHANGED_PATH=$(git diff --name-only HEAD~1 HEAD | grep '^jira-deployment/' | head -n1)
             if [[ "$CHANGED_PATH" == *"/dev/"* ]]; then
               echo "environment=dev" >> $GITHUB_OUTPUT
             elif [[ "$CHANGED_PATH" == *"/prod/"* ]]; then
@@ -52,7 +52,7 @@ jobs:
         id: changed-files
         run: |
           if [[ "${{ github.event_name }}" == "push" ]]; then
-            CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^jira-deployment/')
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep '^jira-deployment/')
             echo "변경된 파일 목록:"
             echo "$CHANGED_FILES"
             echo "changed_files<<EOF" >> $GITHUB_OUTPUT
@@ -63,7 +63,7 @@ jobs:
             while IFS= read -r file; do
               echo "📄 파일: $file"
               echo "변경 내용:"
-              git diff ${{ github.event.before }} ${{ github.sha }} -- "$file" | cat
+              git diff HEAD~1 HEAD -- "$file" | cat
               echo "----------------------------------------"
             done <<< "$CHANGED_FILES"
           fi
