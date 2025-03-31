@@ -28,7 +28,7 @@ jobs:
     steps:
       # 1. 코드 체크아웃
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -37,7 +37,10 @@ jobs:
         id: detect-env
         run: |
           if [[ "${{ github.event_name }}" == "push" ]]; then
-            CHANGED_PATH=$(git diff --name-only HEAD~1 HEAD -- | grep '^jira-deployment/' | head -n1)
+            # 현재 저장소의 루트 디렉토리 이름 가져오기
+            REPO_NAME=$(basename ${{ github.workspace }})
+            CHANGED_PATH=$(git diff --name-only HEAD~1 HEAD -- | grep "^$REPO_NAME/" | head -n1)
+            
             if [[ "$CHANGED_PATH" == *"/dev/"* ]]; then
               echo "environment=dev" >> $GITHUB_OUTPUT
             elif [[ "$CHANGED_PATH" == *"/prod/"* ]]; then
@@ -54,13 +57,14 @@ jobs:
         id: changed-files
         run: |
           if [[ "${{ github.event_name }}" == "push" ]]; then
-            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD -- | grep '^jira-deployment/')
+            # 현재 저장소의 루트 디렉토리 이름 가져오기
+            REPO_NAME=$(basename ${{ github.workspace }})
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD -- | grep "^$REPO_NAME/")
             echo "변경된 파일 목록:"
             echo "$CHANGED_FILES"
             echo "changed_files<<EOF" >> $GITHUB_OUTPUT
             echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
-
             # 각 변경된 파일의 상세 내용 출력
             while IFS= read -r file; do
               echo "📄 파일: $file"
