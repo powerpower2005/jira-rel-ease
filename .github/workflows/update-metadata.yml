@@ -32,49 +32,47 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 2. 환경 자동 감지
+      # 2. 변경된 파일 필터링
+      - name: Filter changed files
+        id: changed-files
+        uses: dorny/paths-filter@v2
+        with:
+          filters: |
+            dev:
+              - 'jira-deployment/dev/**'
+            prod:
+              - 'jira-deployment/prod/**'
+            staging:
+              - 'jira-deployment/staging/**'
+
+      # 3. 환경 자동 감지
       - name: Detect Environment
         id: detect-env
         run: |
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            # 현재 저장소의 루트 디렉토리 이름 가져오기
-            REPO_NAME=$(basename ${{ github.workspace }})
-            CHANGED_PATH=$(git diff --name-only HEAD~1 HEAD -- | grep "^$REPO_NAME/" | head -n1)
-            
-            if [[ "$CHANGED_PATH" == *"/dev/"* ]]; then
-              echo "environment=dev" >> $GITHUB_OUTPUT
-            elif [[ "$CHANGED_PATH" == *"/prod/"* ]]; then
-              echo "environment=prod" >> $GITHUB_OUTPUT
-            elif [[ "$CHANGED_PATH" == *"/staging/"* ]]; then
-              echo "environment=stage" >> $GITHUB_OUTPUT
-            fi
+          if [[ "${{ steps.changed-files.outputs.dev }}" == "true" ]]; then
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          elif [[ "${{ steps.changed-files.outputs.prod }}" == "true" ]]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+          elif [[ "${{ steps.changed-files.outputs.staging }}" == "true" ]]; then
+            echo "environment=stage" >> $GITHUB_OUTPUT
           else
             echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
           fi
 
-      # 3. 변경된 파일 확인
-      - name: Check Changed Files
-        id: changed-files
+      # 4. 변경된 파일 목록 출력
+      - name: List Changed Files
         run: |
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            # 현재 저장소의 루트 디렉토리 이름 가져오기
-            REPO_NAME=$(basename ${{ github.workspace }})
-            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD -- | grep "^$REPO_NAME/")
-            echo "변경된 파일 목록:"
-            echo "$CHANGED_FILES"
-            echo "changed_files<<EOF" >> $GITHUB_OUTPUT
-            echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-            # 각 변경된 파일의 상세 내용 출력
-            while IFS= read -r file; do
-              echo "📄 파일: $file"
-              echo "변경 내용:"
-              git diff HEAD~1 HEAD -- "$file" | cat
-              echo "----------------------------------------"
-            done <<< "$CHANGED_FILES"
-          fi
+          echo "변경된 파일 목록:"
+          git diff --name-only HEAD~1 HEAD -- | grep '^jira-deployment/' || true
+          echo "----------------------------------------"
+          git diff --name-only HEAD~1 HEAD -- | grep '^jira-deployment/' | while read -r file; do
+            echo "📄 파일: $file"
+            echo "변경 내용:"
+            git diff HEAD~1 HEAD -- "$file" | cat
+            echo "----------------------------------------"
+          done
 
-      # 4. Jira 이슈 키 추출
+      # 5. Jira 이슈 키 추출
       - name: Extract Jira Issue Keys
         id: extract-keys
         run: |
@@ -82,7 +80,7 @@ jobs:
           echo "📌 추출된 Jira Issue Keys: $ISSUE_KEYS"
           echo "issue-keys=$ISSUE_KEYS" >> $GITHUB_OUTPUT
 
-      # 5. Deployment 생성
+      # 6. Deployment 생성
       - name: Create Deployment
         id: create-deployment
         uses: chrnorm/deployment-action@releases/v2
@@ -92,7 +90,7 @@ jobs:
           ref: ${{ github.sha }}
           description: "Metadata update deployment to ${{ steps.detect-env.outputs.environment }}"
 
-      # 6. Deployment 상태 업데이트
+      # 7. Deployment 상태 업데이트
       - name: Update Deployment Status
         uses: chrnorm/deployment-status@releases/v2
         if: success()
