@@ -2,6 +2,10 @@ name: Update Metadata
 
 on:
   push:
+    branches:
+        - 'main'
+        - 'master'
+        - 'release*'  # release/ 로 시작하는 모든 브랜치
     paths:
       - 'jira-deployment/dev/**'
       - 'jira-deployment/prod/**'
@@ -11,11 +15,11 @@ on:
       environment:
         description: '메타데이터를 업데이트할 환경'
         required: true
-        default: 'stage'
+        default: 'staging'
         type: choice
         options:
           - prod
-          - stage
+          - staging
           - dev
 
 jobs:
@@ -45,21 +49,7 @@ jobs:
             staging:
               - 'jira-deployment/staging/**'
 
-      # 3. 환경 자동 감지
-      - name: Detect Environment
-        id: detect-env
-        run: |
-          if [[ "${{ steps.changed-files.outputs.dev }}" == "true" ]]; then
-            echo "environment=dev" >> $GITHUB_OUTPUT
-          elif [[ "${{ steps.changed-files.outputs.prod }}" == "true" ]]; then
-            echo "environment=prod" >> $GITHUB_OUTPUT
-          elif [[ "${{ steps.changed-files.outputs.staging }}" == "true" ]]; then
-            echo "environment=stage" >> $GITHUB_OUTPUT
-          else
-            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
-          fi
-
-      # 4. 변경된 파일 목록 출력
+      # 3. 변경된 파일 목록 출력
       - name: List Changed Files
         run: |
           echo "변경된 파일 목록:"
@@ -72,7 +62,7 @@ jobs:
             echo "----------------------------------------"
           done
 
-      # 5. Jira 이슈 키 추출
+      # 4. Jira 이슈 키 추출
       - name: Extract Jira Issue Keys
         id: extract-keys
         run: |
@@ -80,29 +70,71 @@ jobs:
           echo "📌 추출된 Jira Issue Keys: $ISSUE_KEYS"
           echo "issue-keys=$ISSUE_KEYS" >> $GITHUB_OUTPUT
 
-      # 6. Deployment 생성
-      - name: Create Deployment
-        id: create-deployment
+      # 5. Dev Deployment 생성
+      - name: Create Dev Deployment
+        id: create-dev-deployment
+        if: steps.changed-files.outputs.dev == 'true'
         uses: chrnorm/deployment-action@releases/v2
         with:
           token: ${{ github.token }}
-          environment: ${{ steps.detect-env.outputs.environment }}
+          environment: dev
           ref: ${{ github.sha }}
-          description: "Metadata update deployment to ${{ steps.detect-env.outputs.environment }}"
+          description: "Metadata update deployment to dev"
 
-      # 7. Deployment 상태 업데이트
-      - name: Update Deployment Status
+      # 6. Staging Deployment 생성
+      - name: Create Staging Deployment
+        id: create-staging-deployment
+        if: steps.changed-files.outputs.staging == 'true'
+        uses: chrnorm/deployment-action@releases/v2
+        with:
+          token: ${{ github.token }}
+          environment: stage
+          ref: ${{ github.sha }}
+          description: "Metadata update deployment to stage"
+
+      # 7. Prod Deployment 생성
+      - name: Create Prod Deployment
+        id: create-prod-deployment
+        if: steps.changed-files.outputs.prod == 'true'
+        uses: chrnorm/deployment-action@releases/v2
+        with:
+          token: ${{ github.token }}
+          environment: prod
+          ref: ${{ github.sha }}
+          description: "Metadata update deployment to prod"
+
+      # 8. Dev Deployment 상태 업데이트
+      - name: Update Dev Deployment Status
+        if: steps.create-dev-deployment.outcome == 'success'
         uses: chrnorm/deployment-status@releases/v2
-        if: success()
         with:
           token: ${{ github.token }}
           state: "success"
-          deployment-id: ${{ steps.create-deployment.outputs.deployment_id }}
-          
+          deployment-id: ${{ steps.create-dev-deployment.outputs.deployment_id }}
+
+      # 9. Staging Deployment 상태 업데이트
+      - name: Update Staging Deployment Status
+        if: steps.create-staging-deployment.outcome == 'success'
+        uses: chrnorm/deployment-status@releases/v2
+        with:
+          token: ${{ github.token }}
+          state: "success"
+          deployment-id: ${{ steps.create-staging-deployment.outputs.deployment_id }}
+
+      # 10. Prod Deployment 상태 업데이트
+      - name: Update Prod Deployment Status
+        if: steps.create-prod-deployment.outcome == 'success'
+        uses: chrnorm/deployment-status@releases/v2
+        with:
+          token: ${{ github.token }}
+          state: "success"
+          deployment-id: ${{ steps.create-prod-deployment.outputs.deployment_id }}
+
+      # 11. 실패 시 Deployment 상태 업데이트
       - name: Update Deployment Status on Failure
         if: failure()
         uses: chrnorm/deployment-status@releases/v2
         with:
           token: ${{ github.token }}
           state: "failure"
-          deployment-id: ${{ steps.create-deployment.outputs.deployment_id }}
+          deployment-id: ${{ steps.create-dev-deployment.outputs.deployment_id || steps.create-staging-deployment.outputs.deployment_id || steps.create-prod-deployment.outputs.deployment_id }}
